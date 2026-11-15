@@ -1,0 +1,3 @@
+#!/bin/sh
+# Last local check before anything leaves this machine: scan every tracked file.
+exec node scripts/privacy-guard.mjs --all
