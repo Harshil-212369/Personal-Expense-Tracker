@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: no job can write to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24'
+
+# Third-party actions are pinned to a full commit SHA, so a moved tag cannot
+# change what runs here. Dependabot keeps the pins current.
+jobs:
+  privacy:
+    name: Privacy and secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history: a secret removed in a later commit is still a leak
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # No npm install: the guard has no dependencies, so it runs first and cannot be skipped by a broken install.
+      - name: Guard has its own tests
+        run: node --test scripts/
+      - name: No financial documents, personal identifiers or credentials are tracked
+        run: node scripts/privacy-guard.mjs --all
+      - name: Scan the whole history for secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  quality:
+    name: Lint, types, unit tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - name: Server tests (fails under 90% line coverage)
+        run: npm test -w server
+      - name: Web tests
+        run: npm test -w web
+      - name: Production build
+        run: npm run build
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: No known vulnerabilities in what ships
+        run: npm audit --omit=dev --audit-level=low
+      - name: No high-severity vulnerabilities in the toolchain
+        run: npm audit --audit-level=high
+
+  api:
+    name: API contract tests (Postman)
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Install the Postman CLI
+        run: curl -fsSL -o- "https://dl-cli.pstmn.io/install/linux64.sh" | sh
+      - name: Run the collection against a throwaway server
+        run: npm run test:api
+
+  e2e:
+    name: End-to-end tests (Playwright)
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx -w e2e playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Keep the report when a test fails
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 7
+
+  docker:
+    name: Container builds and starts
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker build -t ledgerlens:ci .
+      - name: Refuses to start exposed without a token
+        run: |
+          if docker run --rm ledgerlens:ci; then
+            echo "The container started on 0.0.0.0 with no API_TOKEN. It must fail closed." && exit 1
+          fi
+      - name: Starts with a token and answers health checks
+        run: |
+          docker run -d --name ledgerlens -p 127.0.0.1:4000:4000 -e API_TOKEN="$(head -c 32 /dev/urandom | base64 | tr -d '+/=')" ledgerlens:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:4000/api/health && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4000/api/health | grep -q '"auth":"token"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4000/api/transactions)" = "401"
+          test "$(docker exec ledgerlens id -u)" != "0"

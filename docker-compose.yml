@@ -1,0 +1,19 @@
+# docker compose up --build
+# Requires API_TOKEN in the environment (or a git-ignored .env file beside this one).
+services:
+  ledgerlens:
+    build: .
+    environment:
+      API_TOKEN: ${API_TOKEN:?Set API_TOKEN to a random string of at least 24 characters}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - '127.0.0.1:4000:4000' # published on loopback only
+    volumes:
+      - ledgerlens-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped
+
+volumes:
+  ledgerlens-data:
