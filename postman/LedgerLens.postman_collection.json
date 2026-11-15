@@ -1,0 +1,1885 @@
+{
+  "info": {
+    "name": "LedgerLens API",
+    "description": "Contract tests for the LedgerLens REST API. Run with `npm run test:api`, which starts a throwaway server on an empty temporary database so the run never touches real data (there is deliberately no default baseUrl, and the first request stops the run if the target database is not empty). Requests run in order and share ids through collection variables; the last folder removes everything the run created.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. System",
+      "item": [
+        {
+          "name": "Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('reports ok with a semantic version', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('ok');",
+                  "  pm.expect(body.version).to.match(/^\\d+\\.\\d+\\.\\d+$/);",
+                  "  pm.expect(body.ai).to.have.keys('enabled', 'model');",
+                  "});",
+                  "// Safety interlock: this collection creates and deletes data, so it only runs",
+                  "// against an empty database. If the target already holds transactions (your",
+                  "// real ledger, for instance) the run stops here before changing anything.",
+                  "const counts = pm.response.json().counts;",
+                  "const empty = counts.transactions === 0 && counts.receipts === 0 && counts.imports === 0;",
+                  "pm.test('target database is empty (refusing to run against real data otherwise)', () => {",
+                  "  pm.expect(empty, 'Point baseUrl at a throwaway server: use `npm run test:api`.').to.be.true;",
+                  "});",
+                  "if (!empty) pm.execution.setNextRequest(null);",
+                  "pm.test('sends hardening headers', () => {",
+                  "  pm.expect(pm.response.headers.has('X-Powered-By')).to.be.false;",
+                  "  pm.expect(pm.response.headers.get('X-Content-Type-Options')).to.eql('nosniff');",
+                  "  pm.expect(pm.response.headers.get('Cache-Control')).to.eql('no-store');",
+                  "  pm.expect(pm.response.headers.get('Content-Security-Policy')).to.include(\"default-src 'self'\");",
+                  "  pm.expect(pm.response.headers.get('X-Request-Id')).to.match(/^[0-9a-f-]{36}$/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "health"
+              ]
+            },
+            "description": "Liveness, version, and whether AI and token auth are enabled. Never requires a token."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Transactions",
+      "item": [
+        {
+          "name": "Create a transaction",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 with a Location header', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(pm.response.headers.get('Location')).to.eql('/api/transactions/' + body.id);",
+                  "  pm.collectionVariables.set('txnId', body.id);",
+                  "});",
+                  "pm.test('normalizes the merchant and categorizes by rule', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.merchant).to.eql('Tim Hortons');",
+                  "  pm.expect(body.categoryName).to.eql('Dining & Coffee');",
+                  "  pm.expect(body.categorySource).to.eql('rule');",
+                  "  pm.expect(body.amountCents).to.eql(475);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions"
+              ]
+            },
+            "description": "Amounts are integer cents. With no categoryId the rules engine picks the category.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"txnDate\": \"2026-10-05\",\n  \"description\": \"TIM HORTONS #1021\",\n  \"amountCents\": 475\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Read it back",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns the stored transaction', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().id).to.eql(Number(pm.collectionVariables.get('txnId')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/{{txnId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                "{{txnId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List with filters",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('returns a page envelope', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.keys('items', 'total', 'limit', 'offset');",
+                  "  pm.expect(body.limit).to.eql(10);",
+                  "  pm.expect(body.items.some((t) => t.id === Number(pm.collectionVariables.get('txnId')))).to.be.true;",
+                  "});",
+                  "pm.test('sorted by amount ascending', () => {",
+                  "  const amounts = pm.response.json().items.map((t) => t.amountCents);",
+                  "  pm.expect(amounts).to.eql([...amounts].sort((a, b) => a - b));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions?q=tim hortons&from=2026-10-01&to=2026-10-31&sort=amount&order=asc&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "tim hortons"
+                },
+                {
+                  "key": "from",
+                  "value": "2026-10-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-10-31"
+                },
+                {
+                  "key": "sort",
+                  "value": "amount"
+                },
+                {
+                  "key": "order",
+                  "value": "asc"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update: add a note",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('updates only the given fields', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.notes).to.eql('team coffee');",
+                  "  pm.expect(body.amountCents).to.eql(475);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/{{txnId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                "{{txnId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"team coffee\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Reject invalid input",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectProblem(status) {",
+                  "  pm.response.to.have.status(status);",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql(status);",
+                  "  pm.expect(body).to.include.keys('type', 'title', 'detail', 'requestId');",
+                  "  return body;",
+                  "}",
+                  "",
+                  "pm.test('400 with one message per bad field', () => {",
+                  "  const body = expectProblem(400);",
+                  "  const fields = body.errors.map((e) => e.field).sort();",
+                  "  pm.expect(fields).to.eql(['(root)', 'amountCents', 'description', 'txnDate']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions"
+              ]
+            },
+            "description": "An impossible date, an empty description, a fractional cent amount and an unknown key: all four are reported.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"txnDate\": \"2026-02-30\",\n  \"description\": \"\",\n  \"amountCents\": 4.75,\n  \"isAdmin\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Search text is not SQL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('an injection attempt is just a search that matches nothing', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().total).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions?q='%20OR%201=1%20--",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "'%20OR%201=1%20--"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reject an unknown sort key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectProblem(status) {",
+                  "  pm.response.to.have.status(status);",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql(status);",
+                  "  pm.expect(body).to.include.keys('type', 'title', 'detail', 'requestId');",
+                  "  return body;",
+                  "}",
+                  "",
+                  "pm.test('400: sort keys are a fixed whitelist', () => { expectProblem(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions?sort=password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "sort",
+                  "value": "password"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Categories and rules",
+      "item": [
+        {
+          "name": "List categories",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('includes the built-in taxonomy', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const names = pm.response.json().map((c) => c.name);",
+                  "  pm.expect(names).to.include.members(['Groceries', 'Dining & Coffee', 'Uncategorized', 'Card Payments']);",
+                  "  pm.collectionVariables.set('groceriesId', pm.response.json().find((c) => c.name === 'Groceries').id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create a category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.collectionVariables.set('categoryId', pm.response.json().id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman Test Category\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Duplicate category name conflicts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectProblem(status) {",
+                  "  pm.response.to.have.status(status);",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql(status);",
+                  "  pm.expect(body).to.include.keys('type', 'title', 'detail', 'requestId');",
+                  "  return body;",
+                  "}",
+                  "",
+                  "pm.test('409, case-insensitively', () => { expectProblem(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman test category\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Built-in categories are protected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectProblem(status) {",
+                  "  pm.response.to.have.status(status);",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql(status);",
+                  "  pm.expect(body).to.include.keys('type', 'title', 'detail', 'requestId');",
+                  "  return body;",
+                  "}",
+                  "",
+                  "pm.test('422', () => { expectProblem(422); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories/{{groceriesId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                "{{groceriesId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create a rule",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 and re-categorizes existing transactions', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.rule.source).to.eql('user');",
+                  "  pm.expect(body.recategorized).to.be.at.least(1);",
+                  "  pm.collectionVariables.set('ruleId', body.rule.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/rules",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "rules"
+              ]
+            },
+            "description": "A user rule outranks the built-in rule, so the Tim Hortons transaction moves to the new category.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pattern\": \"Tim Hortons\",\n  \"categoryId\": {{categoryId}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The rule moved the transaction",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('category now comes from the user rule', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.categoryName).to.eql('Postman Test Category');",
+                  "  pm.expect(body.categorySource).to.eql('rule');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/{{txnId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                "{{txnId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete the rule",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 and transactions fall back to the built-in rule', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().recategorized).to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/rules/{{ruleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "rules",
+                "{{ruleId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Imports and receipts",
+      "item": [
+        {
+          "name": "Preview a statement (dry run)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 preview, nothing stored', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('preview');",
+                  "  pm.expect(body.importId).to.be.null;",
+                  "  pm.expect(body.kind).to.eql('cibc-credit-pdf');",
+                  "  pm.expect(body.parser).to.eql('deterministic');",
+                  "});",
+                  "pm.test('every printed total reconciles to the cent', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.reconciled).to.be.true;",
+                  "  pm.expect(body.checks.length).to.be.at.least(5);",
+                  "  body.checks.forEach((c) => pm.expect(c.ok, c.label).to.be.true);",
+                  "  pm.collectionVariables.set('statementRows', body.rowsParsed);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports?dryRun=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports"
+              ],
+              "query": [
+                {
+                  "key": "dryRun",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Uploads the synthetic statement fixture. The document type is detected from its content, never from the file name.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "server/test/fixtures/synthetic/statement-2026-10.pdf"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Import the statement",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 and stores every row', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('imported');",
+                  "  pm.expect(body.rowsInserted).to.eql(Number(pm.collectionVariables.get('statementRows')));",
+                  "  pm.collectionVariables.set('importId', body.importId);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "server/test/fixtures/synthetic/statement-2026-10.pdf"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Importing the same file again is a no-op",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 duplicate, nothing inserted', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('duplicate');",
+                  "  pm.expect(body.rowsInserted).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "server/test/fixtures/synthetic/statement-2026-10.pdf"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Same transactions as CSV are recognized",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('every CSV row is already on file from the PDF', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.rowsInserted).to.eql(0);",
+                  "  pm.expect(body.rowsDuplicate).to.eql(Number(pm.collectionVariables.get('statementRows')));",
+                  "  pm.collectionVariables.set('csvImportId', body.importId);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "server/test/fixtures/synthetic/cibc-export-2026-10.csv"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Import a receipt email",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201, arithmetic verified, linked to its statement line', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.docType).to.eql('receipt');",
+                  "  pm.expect(body.kind).to.eql('metro-receipt-email');",
+                  "  pm.expect(body.reconciled).to.be.true;",
+                  "  pm.expect(body.receiptsLinked).to.eql(1);",
+                  "  pm.collectionVariables.set('receiptImportId', body.importId);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "server/test/fixtures/synthetic/metro-receipt.eml"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List receipts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the receipt is linked to a transaction', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const receipt = pm.response.json()[0];",
+                  "  pm.expect(receipt.transactionId).to.be.a('number');",
+                  "  pm.expect(receipt.arithmeticOk).to.be.true;",
+                  "  pm.collectionVariables.set('receiptId', receipt.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/receipts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "receipts"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Receipt line items",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('items add up to the subtotal', () => {",
+                  "  const body = pm.response.json();",
+                  "  const itemsTotal = body.items.reduce((sum, i) => sum + i.totalCents, 0);",
+                  "  pm.expect(itemsTotal).to.be.at.least(body.subtotalCents); // basket discounts only ever reduce it",
+                  "  pm.expect(body.subtotalCents + body.taxCents).to.eql(body.totalCents);",
+                  "});",
+                  "pm.test('no loyalty or customer number is exposed', () => {",
+                  "  pm.expect(pm.response.text()).to.not.match(/loyalty|customer number|rewards/i);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/receipts/{{receiptId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "receipts",
+                "{{receiptId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reject an unreadable file",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectProblem(status) {",
+                  "  pm.response.to.have.status(status);",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql(status);",
+                  "  pm.expect(body).to.include.keys('type', 'title', 'detail', 'requestId');",
+                  "  return body;",
+                  "}",
+                  "",
+                  "pm.test('422 with a readable reason', () => {",
+                  "  const body = expectProblem(422);",
+                  "  pm.expect(body.detail).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports"
+              ]
+            },
+            "description": "A JSON file is not a statement: it is refused, not guessed at.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "package.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Import history",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('lists the imports with their reconciliation result', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const statement = pm.response.json().find((i) => i.id === Number(pm.collectionVariables.get('importId')));",
+                  "  pm.expect(statement.reconciled).to.be.true;",
+                  "  pm.expect(statement.periodStart).to.match(/^\\d{4}-\\d{2}-\\d{2}$/);",
+                  "  pm.collectionVariables.set('from', statement.periodStart);",
+                  "  pm.collectionVariables.set('to', statement.periodEnd);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Analytics",
+      "item": [
+        {
+          "name": "Summary",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('headline figures for the statement period', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.totalCents).to.be.above(0);",
+                  "  pm.expect(body.purchaseCount).to.be.above(0);",
+                  "  pm.expect(body.avgPerDayCents).to.eql(Math.round(body.totalCents / body.days));",
+                  "  pm.collectionVariables.set('totalCents', body.totalCents);",
+                  "  pm.collectionVariables.set('days', body.days);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/summary?from={{from}}&to={{to}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{from}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{to}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "By category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('categories add up to the headline total', () => {",
+                  "  const rows = pm.response.json();",
+                  "  const sum = rows.reduce((total, r) => total + r.cents, 0);",
+                  "  pm.expect(sum).to.eql(Number(pm.collectionVariables.get('totalCents')));",
+                  "  const shares = rows.reduce((total, r) => total + r.share, 0);",
+                  "  pm.expect(shares).to.be.closeTo(1, 1e-9);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/categories?from={{from}}&to={{to}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "categories"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{from}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{to}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Daily time series",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('one point per day, cumulative total matches the summary', () => {",
+                  "  const points = pm.response.json();",
+                  "  pm.expect(points.length).to.eql(Number(pm.collectionVariables.get('days')));",
+                  "  pm.expect(points[points.length - 1].cumulativeCents).to.eql(Number(pm.collectionVariables.get('totalCents')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/timeseries?from={{from}}&to={{to}}&granularity=day",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "timeseries"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{from}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{to}}"
+                },
+                {
+                  "key": "granularity",
+                  "value": "day"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Top merchants",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ranked by spend', () => {",
+                  "  const cents = pm.response.json().map((m) => m.cents);",
+                  "  pm.expect(cents).to.eql([...cents].sort((a, b) => b - a));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/merchants?from={{from}}&to={{to}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "merchants"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{from}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{to}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Calendar",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('seven weekdays and one cell per day', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.weekdays).to.have.lengthOf(7);",
+                  "  pm.expect(body.days).to.have.lengthOf(Number(pm.collectionVariables.get('days')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/calendar?from={{from}}&to={{to}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "calendar"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{from}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{to}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Recurring charges",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with a list', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/recurring",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "recurring"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Anomalies",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('each anomaly explains itself', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.response.json().forEach((a) => pm.expect(a.detail).to.be.a('string').and.not.empty);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/anomalies?from={{from}}&to={{to}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "anomalies"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{from}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{to}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Grocery items",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('item statistics from the imported receipt', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.receiptCount).to.eql(1);",
+                  "  pm.expect(body.unlinkedReceipts).to.eql(0);",
+                  "  pm.expect(body.items.length).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/groceries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "groceries"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Insights (computed locally)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('rule-based insights, no model involved', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.source).to.eql('rules');",
+                  "  pm.expect(body.model).to.be.null;",
+                  "  pm.expect(body.insights.length).to.be.at.most(6);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/insights?from={{from}}&to={{to}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "insights"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{from}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{to}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reject a reversed range",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectProblem(status) {",
+                  "  pm.response.to.have.status(status);",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql(status);",
+                  "  pm.expect(body).to.include.keys('type', 'title', 'detail', 'requestId');",
+                  "  return body;",
+                  "}",
+                  "",
+                  "pm.test('400', () => { expectProblem(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/summary?from=2026-10-21&to=2026-09-22",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2026-10-21"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-09-22"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Security",
+      "item": [
+        {
+          "name": "Cross-origin write is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectProblem(status) {",
+                  "  pm.response.to.have.status(status);",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql(status);",
+                  "  pm.expect(body).to.include.keys('type', 'title', 'detail', 'requestId');",
+                  "  return body;",
+                  "}",
+                  "",
+                  "pm.test('403: another site cannot post into the ledger', () => { expectProblem(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Origin",
+                "value": "https://attacker.example"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions"
+              ]
+            },
+            "description": "Browsers attach Origin to cross-site POSTs. A mismatch with Host is rejected before any handler runs.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"txnDate\": \"2026-10-05\",\n  \"description\": \"CSRF attempt\",\n  \"amountCents\": 100\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Malformed JSON",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectProblem(status) {",
+                  "  pm.response.to.have.status(status);",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql(status);",
+                  "  pm.expect(body).to.include.keys('type', 'title', 'detail', 'requestId');",
+                  "  return body;",
+                  "}",
+                  "",
+                  "pm.test('400, not a stack trace', () => {",
+                  "  const body = expectProblem(400);",
+                  "  pm.expect(JSON.stringify(body)).to.not.match(/SyntaxError|at JSON\\.parse|node_modules/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"txnDate\": \"2026-10-05\", \"description\": ",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Unknown route",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectProblem(status) {",
+                  "  pm.response.to.have.status(status);",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql(status);",
+                  "  pm.expect(body).to.include.keys('type', 'title', 'detail', 'requestId');",
+                  "  return body;",
+                  "}",
+                  "",
+                  "pm.test('404 as problem details', () => { expectProblem(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/does-not-exist",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "does-not-exist"
+              ]
+            }
+          }
+        },
+        {
+          "name": "AI is off unless configured",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function expectProblem(status) {",
+                  "  pm.response.to.have.status(status);",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql(status);",
+                  "  pm.expect(body).to.include.keys('type', 'title', 'detail', 'requestId');",
+                  "  return body;",
+                  "}",
+                  "",
+                  "pm.test('503: no key, no model call', () => { expectProblem(503); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ai/categorize",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ai",
+                "categorize"
+              ]
+            },
+            "description": "With ANTHROPIC_API_KEY unset the AI routes answer 503 and nothing leaves the machine."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Cleanup",
+      "item": [
+        {
+          "name": "Delete the transaction",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/{{txnId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                "{{txnId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deleting it again is a 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/{{txnId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                "{{txnId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete the category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories/{{categoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                "{{categoryId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Roll back the receipt import",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports/{{receiptImportId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports",
+                "{{receiptImportId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Roll back the CSV import",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports/{{csvImportId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports",
+                "{{csvImportId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Roll back the statement import",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/imports/{{importId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "imports",
+                "{{importId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Everything this run created is gone",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('counts are back to zero on a fresh database', () => {",
+                  "  const counts = pm.response.json().counts;",
+                  "  pm.expect(counts).to.eql({ transactions: 0, receipts: 0, imports: 0 });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "health"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
