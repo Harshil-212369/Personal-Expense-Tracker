@@ -1,0 +1,44 @@
+{
+  "name": "ledgerlens",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Privacy-first personal expense tracker: statement + receipt ingestion, REST API, React analytics dashboard.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "workspaces": [
+    "server",
+    "web",
+    "e2e"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,magenta \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w web",
+    "start": "npm run start -w server",
+    "demo": "npm run build -w web && npm run demo -w server",
+    "ingest": "npm run ingest -w server --",
+    "test": "npm test -w server && npm test -w web && node --test scripts/",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "lint": "eslint .",
+    "test:api": "node scripts/api-test.mjs",
+    "test:e2e": "npm test -w e2e",
+    "check:privacy": "node scripts/privacy-guard.mjs --all",
+    "verify": "npm run check:privacy && npm run lint && npm run typecheck && npm test",
+    "prepare": "node scripts/install-hooks.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "concurrently": "^10.0.7",
+    "eslint": "^10.15.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.14.0",
+    "typescript-eslint": "^8.72.2"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.8"
+    }
+  }
+}
