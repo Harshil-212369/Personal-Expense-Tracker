@@ -19,7 +19,7 @@
     "start": "npm run start -w server",
     "demo": "npm run build -w web && npm run demo -w server",
     "ingest": "npm run ingest -w server --",
-    "test": "npm test -w server && npm test -w web && node --test scripts/",
+    "test": "npm test -w server && npm test -w web && node --test scripts/*.test.mjs",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
     "lint": "eslint .",
     "test:api": "node scripts/api-test.mjs",

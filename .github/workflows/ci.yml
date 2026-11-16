@@ -32,7 +32,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       # No npm install: the guard has no dependencies, so it runs first and cannot be skipped by a broken install.
       - name: Guard has its own tests
-        run: node --test scripts/
+        run: node --test scripts/*.test.mjs
       - name: No financial documents, personal identifiers or credentials are tracked
         run: node scripts/privacy-guard.mjs --all
       - name: Scan the whole history for secrets (gitleaks)
