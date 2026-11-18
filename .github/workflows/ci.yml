@@ -23,6 +23,9 @@ jobs:
   privacy:
     name: Privacy and secret scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # gitleaks lists a pull request's commits so it can scan only those
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,8 +76,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: No known vulnerabilities in what ships
         run: npm audit --omit=dev --audit-level=low
-      - name: No high-severity vulnerabilities in the toolchain
-        run: npm audit --audit-level=high
+      - name: No high-severity vulnerabilities in the toolchain, except reviewed and dated exceptions
+        run: node scripts/audit-gate.mjs
 
   api:
     name: API contract tests (Postman)
@@ -93,7 +96,7 @@ jobs:
         run: npm run test:api
 
   e2e:
-    name: End-to-end tests (Playwright)
+    name: End-to-end tests (Playwright, Chromium + Firefox + WebKit)
     runs-on: ubuntu-latest
     needs: quality
     steps:
@@ -104,7 +107,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: npx -w e2e playwright install --with-deps chromium
+      - run: npx -w e2e playwright install --with-deps chromium firefox webkit
       - run: npm run test:e2e
       - name: Keep the report when a test fails
         if: failure()
