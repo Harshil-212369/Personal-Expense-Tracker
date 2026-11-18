@@ -135,7 +135,7 @@ npm run test:e2e    # Playwright journey in Chromium, Firefox and WebKit against
 | Web (28 tests) | Formatting, period logic, components, and page flows against a mocked API |
 | Privacy guard (20 tests) | File rules, secret patterns, card and SIN detection, the denylist |
 | API contract (45 requests) | Status codes, response shapes, and cross-endpoint invariants such as "categories sum to the headline total" |
-| End to end (16 steps × 3 browsers) | The same journey in Chromium, Firefox and WebKit, each against its own server and empty database: first run, import, dashboard, corrections, receipts, undo; axe accessibility checks in both themes; phone layout |
+| End to end (20 tests × 3 browsers) | The same journey in Chromium, Firefox and WebKit, each against its own server and empty database: first run, import, dashboard, corrections, receipts, undo; axe accessibility checks in both themes; phone layout |
 
 ## Project layout
 

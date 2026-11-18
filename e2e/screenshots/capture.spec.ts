@@ -6,7 +6,7 @@ const OUT = path.join(import.meta.dirname, '../../docs/screenshots');
 const FIXTURES = path.join(import.meta.dirname, '../../server/test/fixtures/synthetic');
 
 async function settle(page: Page) {
-  await page.waitForLoadState('networkidle');
+  await expect(page.locator('.skeleton')).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
 }
 

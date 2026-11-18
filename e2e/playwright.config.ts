@@ -29,7 +29,10 @@ export default defineConfig({
   // One worker per browser: the three journeys run side by side.
   workers: BROWSERS.length,
   forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 1 : 0,
+  // No retries: the journey is stateful. Playwright retries a serial group from
+  // its first test, by which point the database already holds the earlier
+  // attempt's imports, so a retry fails for reasons unrelated to the original.
+  retries: 0,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list']],
   timeout: 30_000,
   expect: { timeout: 7_000 },

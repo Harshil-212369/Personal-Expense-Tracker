@@ -20,6 +20,16 @@ const dollars = (cents: number) => `$${(cents / 100).toLocaleString('en-CA', { m
 
 test.describe.configure({ mode: 'serial' });
 
+/**
+ * Waits until a page has finished rendering its data: the heading is up and no
+ * loading placeholder is left. More reliable than waiting for an idle network,
+ * which Playwright discourages and which can stall on a busy CI runner.
+ */
+async function pageReady(page: Page) {
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await expect(page.locator('.skeleton')).toHaveCount(0);
+}
+
 async function importFile(page: Page, file: string) {
   await page.goto('/import');
   await page.getByTestId('file-input').setInputFiles(fixture(file));
@@ -177,26 +187,25 @@ test('the receipts page itemizes what was bought', async ({ page }) => {
   await expect(page.getByRole('dialog', { name: 'Receipt' }).getByText('Subtotal')).toBeVisible();
 });
 
-test('pages have no serious accessibility violations, in light and dark themes', async ({ page }) => {
-  for (const route of ['/', '/transactions', '/receipts', '/import', '/rules']) {
+// One test per page, so each gets its own time budget and a failure names the page.
+for (const route of ['/', '/transactions', '/receipts', '/import', '/rules']) {
+  test(`${route} has no serious accessibility violations, in light and dark themes`, async ({ page }) => {
     await page.goto(route);
-    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-    await page.waitForLoadState('networkidle');
+    await pageReady(page);
     for (const theme of ['light', 'dark'] as const) {
       await page.evaluate((t) => { document.documentElement.dataset['theme'] = t; }, theme);
       const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
       const serious = results.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical');
       expect(serious.map((v) => `${route} [${theme}] ${v.id}: ${v.nodes.length} node(s), e.g. ${v.nodes[0]?.html.slice(0, 120)}`)).toEqual([]);
     }
-  }
-});
+  });
+}
 
 test('the layout holds on a phone without sideways scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   for (const route of ['/', '/transactions', '/import']) {
     await page.goto(route);
-    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-    await page.waitForLoadState('networkidle');
+    await pageReady(page);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow, `${route} scrolls sideways by ${overflow}px`).toBeLessThanOrEqual(1);
   }
