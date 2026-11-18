@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # --- Build the UI -------------------------------------------------------------
-FROM node:24-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY server/package.json server/
@@ -17,7 +17,7 @@ RUN npm run build -w web
 # --- Runtime ------------------------------------------------------------------
 # The server runs TypeScript directly (Node strips the types) and uses the
 # built-in SQLite module, so the image needs no compiler and no native addons.
-FROM node:24-alpine AS runtime
+FROM node:26-alpine AS runtime
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=4000 \
