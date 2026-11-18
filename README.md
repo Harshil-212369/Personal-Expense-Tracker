@@ -54,8 +54,8 @@ For development, `npm run dev` runs the API on port 4000 and the Vite dev server
 | Storage | SQLite (`node:sqlite`), SQL migrations, integer cents, `STRICT` tables with `CHECK` constraints |
 | Parsing | pdf.js text layer with coordinates, postal-mime, csv-parse |
 | AI (optional) | Anthropic SDK with schema-constrained output |
-| Tests | Node test runner + Supertest, Vitest + Testing Library, Postman CLI, Playwright + axe-core |
-| Delivery | GitHub Actions, Docker, Dependabot, gitleaks |
+| Tests | Node test runner + Supertest, Vitest + Testing Library, Postman CLI, Playwright (Chromium, Firefox, WebKit) + axe-core |
+| Delivery | GitHub Actions, Docker, Dependabot, gitleaks, an `npm audit` gate with dated exceptions |
 
 ## Architecture
 
@@ -126,7 +126,7 @@ The Postman collection in [`postman/`](postman) documents and tests every route.
 ```bash
 npm run verify      # privacy guard, lint, typecheck, unit tests
 npm run test:api    # Postman collection against a throwaway server and database
-npm run test:e2e    # Playwright journey against the production build (run npm run build first)
+npm run test:e2e    # Playwright journey in Chromium, Firefox and WebKit against the production build (run npm run build first)
 ```
 
 | Suite | What it covers |
@@ -135,7 +135,7 @@ npm run test:e2e    # Playwright journey against the production build (run npm r
 | Web (28 tests) | Formatting, period logic, components, and page flows against a mocked API |
 | Privacy guard (20 tests) | File rules, secret patterns, card and SIN detection, the denylist |
 | API contract (45 requests) | Status codes, response shapes, and cross-endpoint invariants such as "categories sum to the headline total" |
-| End to end (16 steps) | First run, import, dashboard, corrections, receipts, undo; axe accessibility checks in both themes; phone layout |
+| End to end (20 tests × 3 browsers) | The same journey in Chromium, Firefox and WebKit, each against its own server and empty database: first run, import, dashboard, corrections, receipts, undo; axe accessibility checks in both themes; phone layout |
 
 ## Project layout
 

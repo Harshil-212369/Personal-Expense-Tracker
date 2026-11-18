@@ -67,6 +67,10 @@ Model output is treated as untrusted input. It must match a schema, is validated
 - A statement that prints no totals (a CSV export) cannot be verified; the UI says so.
 - Merchant names sent for AI categorization can themselves be sensitive. The feature is opt-in per click.
 
+## Dependencies
+
+CI fails on any known vulnerability in the packages the app ships (`npm audit --omit=dev`) and on any high or critical advisory in the build toolchain. When an advisory has no fix yet, it can be accepted in `audit-exceptions.json` with a reason and an expiry date. [`scripts/audit-gate.mjs`](../scripts/audit-gate.mjs) fails the build again once that date passes, and warns about exceptions that no longer match anything. Dependabot opens weekly upgrade pull requests for npm packages, the pinned GitHub Actions and the Docker base image.
+
 ## Reporting a problem
 
 Open a private security advisory on the GitHub repository rather than a public issue.

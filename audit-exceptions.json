@@ -1,0 +1,12 @@
+{
+  "$comment": "Advisories accepted by scripts/audit-gate.mjs. Each needs a reason and an expiry date; after that date CI fails again until someone re-checks the advisory.",
+  "exceptions": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "reason": "ReDoS that needs an attacker-controlled glob pattern. Here picomatch only runs at build time inside ESLint and Vite, on patterns written in this repository. It is not in the shipped app (the production-only audit reports 0). No patched release exists yet (every version up to 4.0.7 is affected).",
+      "accepted": "2026-11-17",
+      "expires": "2026-12-17"
+    }
+  ]
+}
